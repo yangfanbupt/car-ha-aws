@@ -60,7 +60,7 @@
 	  
     },
     "CsrInstance" : {
-      "2x500Mbps"   : { "Type" : "t2.medium",   "Bandwidth" : "500000" },
+      "2x500Mbps"   : { "Type" : "c4.large",   "Bandwidth" : "500000" },
       "2x1Gbps"     : { "Type" : "c4.xlarge",  "Bandwidth" : "1000000" },
       "2x2Gbps"     : { "Type" : "c4.2xlarge", "Bandwidth" : "2000000" },
       "2x4.5Gbps"   : { "Type" : "c4.4xlarge", "Bandwidth" : "4500000" }
