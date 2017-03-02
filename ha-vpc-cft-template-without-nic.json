@@ -1,0 +1,359 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "HA VPC: This template creates a dedicated High Availability VPC with Cisco CSRs for routing traffic.",
+
+  "Parameters" : {
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "AWS::EC2::KeyPair::KeyName",
+      "Default" : "Lab"
+    },
+    "TerminationProtection" : {
+      "Description" : "Enable termination protection on the CSR EC2 instances to avoid accidential CSR termination?",
+      "Type" : "String",
+      "Default" : "No",
+      "AllowedValues" : ["Yes", "No"]
+    },
+    "VpcCidr" : {
+      "Description" : "CIDR block for HA VPC.",
+      "Type" : "String",
+      "Default" : "10.0.0.0/16"
+    },
+    "PubSubnet" : {
+      "Description" : "Address range for HA VPC public subnet to be created.",
+      "Type" : "String",
+      "Default" : "10.0.0.0/24"
+    },
+    "PriSubnet" : {
+      "Description" : "Address range for HA VPC private subnet to be created.",
+      "Type" : "String",
+      "Default" : "10.0.1.0/24"
+    },
+    "CSRType" : {
+      "Description" : "Maximum network througput required for CSR instances.",
+      "Type" : "String",
+      "Default" : "2x500Mbps",
+      "AllowedValues" : [ "2x500Mbps","2x1Gbps", "2x2Gbps", "2x4.5Gbps" ]
+	},
+    "LicenseModel" : {
+      "Description" : "Choose between BYOL (Bring Your Own License) and License Included license models. Remember to first subscribe the the appropriate Marketplace AMI!",
+      "Type" : "String",
+      "Default" : "BYOL",
+      "AllowedValues" : ["LicenseIncluded", "BYOL"]
+    }
+  },
+  "Mappings" : {
+    "CiscoCsrAMI" : {
+	   "us-east-1"      : { "BYOL" : "ami-d17520c6", "LicenseIncluded" : "ami-53742144" },
+      "us-east-2"      : { "BYOL" : "ami-e7104a82", "LicenseIncluded" : "" },
+      "us-west-2"      : { "BYOL" : "ami-1ed2087e", "LicenseIncluded" : "ami-c1df05a1" },
+      "us-west-1"      : { "BYOL" : "ami-75501815", "LicenseIncluded" : "ami-77501817" },
+      "eu-west-1"      : { "BYOL" : "ami-5084c923", "LicenseIncluded" : "ami-858ac7f6" },
+      "eu-central-1"   : { "BYOL" : "ami-6602fc09", "LicenseIncluded" : "ami-b707f9d8" },
+      "ap-south-1"     : { "BYOL" : "ami-cd7e0aa2", "LicenseIncluded" : "ami-f17a0e9e" },
+      "ap-southeast-1" : { "BYOL" : "ami-f81bbc9b", "LicenseIncluded" : "ami-a018bfc3" },
+      "ap-southeast-2" : { "BYOL" : "ami-e7e7d584", "LicenseIncluded" : "ami-a4e7d5c7" },
+      "ap-northeast-1" : { "BYOL" : "ami-f6ba1f97", "LicenseIncluded" : "ami-62862303" },
+      "ap-northeast-2" : { "BYOL" : "ami-2cc01442", "LicenseIncluded" : "ami-12c1157c" },
+      "sa-east-1"      : { "BYOL" : "ami-7a940916", "LicenseIncluded" : "ami-83910cef" }
+	  
+    },
+    "CsrInstance" : {
+      "2x500Mbps"   : { "Type" : "t2.medium",   "Bandwidth" : "500000" },
+      "2x1Gbps"     : { "Type" : "c4.xlarge",  "Bandwidth" : "1000000" },
+      "2x2Gbps"     : { "Type" : "c4.2xlarge", "Bandwidth" : "2000000" },
+      "2x4.5Gbps"   : { "Type" : "c4.4xlarge", "Bandwidth" : "4500000" }
+    }
+  },
+   "Conditions" : {
+   "EnableTerm" : {"Fn::Equals" : [{"Ref" : "TerminationProtection"}, "Yes"]}
+  },
+  "Resources" : {
+    "HAVPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "CidrBlock" : { "Ref" : "VpcCidr" },
+        "Tags" : [
+          { "Key" : "Name", "Value" : "HA VPC" }
+        ]
+      }
+    },
+    "VPCPubSub" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "HAVPC" },
+        "CidrBlock" : { "Ref" : "PubSubnet" },
+        "AvailabilityZone" : { "Fn::Select": ["0", {"Fn::GetAZs": ""}] }
+      }  
+    },
+    "VPCPriSub" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "HAVPC" },
+        "CidrBlock" : { "Ref" : "PriSubnet" },
+        "AvailabilityZone" : { "Fn::Select": ["0", {"Fn::GetAZs": ""}] }
+      }
+    },
+    "IGW" : {
+      "Type" : "AWS::EC2::InternetGateway",
+      "Properties" : {
+        "Tags" : [
+          { "Key" : "Name", "Value" : "HA VPC IGW" }
+        ]
+      }
+    },
+    "IGWToInternet" : {
+       "Type" : "AWS::EC2::VPCGatewayAttachment",
+       "Properties" : {
+         "VpcId" : { "Ref" : "HAVPC" },
+         "InternetGatewayId" : { "Ref" : "IGW" }
+       }
+    },
+    "VPCPubRouteTable" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "HAVPC" }
+      }
+    },
+    "VPCPublicRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "VPCPubRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "IGW" }
+      }
+    },
+    "VPCPriRouteTable" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "HAVPC" }
+      }
+    },
+    "VPCPriRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "VPCPriRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "NetworkInterfaceId" : { "Ref" : "Csr1PriInt" }
+      }
+    },
+    "VPCPubSubnetRouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "VPCPubSub" },
+        "RouteTableId" : { "Ref" : "VPCPubRouteTable" }
+      }
+    },
+    "VPCPriSubnetRouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "VPCPriSub" },
+        "RouteTableId" : { "Ref" : "VPCPriRouteTable" }
+      }
+    },
+    "CsrEip1" : {
+      "Type" : "AWS::EC2::EIP",
+      "Properties" : {
+        "Domain" : "vpc"
+      }
+    },
+    "CsrEip2" : {
+      "Type" : "AWS::EC2::EIP",
+      "Properties" : {
+        "Domain" : "vpc"
+      }
+    },
+    "CsrEip1Association":{
+       "Type": "AWS::EC2::EIPAssociation",
+       "Properties": {
+          "AllocationId": { "Fn::GetAtt" : [ "CsrEip1", "AllocationId" ] },
+          "InstanceId": { "Ref" : "VpcCsr1" }
+        },
+        "DependsOn" : "VpcCsr1"
+    },
+    "CsrEip2Association":{
+       "Type": "AWS::EC2::EIPAssociation",
+       "Properties": {
+          "AllocationId": { "Fn::GetAtt" : [ "CsrEip2", "AllocationId" ] },
+          "InstanceId": { "Ref" : "VpcCsr2" }
+        },
+        "DependsOn" : "VpcCsr2"
+    },
+    "VpcCsr1" : {
+      "Type" : "AWS::EC2::Instance",
+      "Metadata" : {
+        "Comment1" : "Launch Cisco CSR1"
+      },
+      "Properties" : {
+        "InstanceType" : { "Fn::FindInMap" : [ "CsrInstance", { "Ref" : "CSRType" }, "Type"] },
+        "KeyName" : { "Ref" : "KeyName" },
+        "DisableApiTermination" : {"Fn::If": ["EnableTerm", true, false ]},
+        "ImageId"        : { "Fn::FindInMap" : [ "CiscoCsrAMI", { "Ref" : "AWS::Region" }, { "Ref" : "LicenseModel" } ] },
+        "SubnetId" : { "Ref" : "VPCPubSub" },
+        "SecurityGroupIds" : [{ "Ref" : "CSRSecurityGroup" }],
+        "Tags" : [
+          { "Key" : "Name", "Value" : "HA CSR1" }
+        ],
+        "IamInstanceProfile": { "Ref" : "HACsrInstanceProfile" },
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+         "ios-config-1=\"username ",  { "Ref" : "CsrEip1" }, "\"\n",
+         "ios-config-2=\"interface Tunnel0\"\n",
+         "ios-config-3=\"ip address 172.17.1.1 255.255.255.252\"\n",
+         "ios-config-4=\"ip ospf 1 area 0\"\n",
+         "ios-config-5=\"bfd interval 500 min_rx 500 multiplier 3\"\n",
+         "ios-config-6=\"tunnel source GigabitEthernet1\"\n",
+         "ios-config-7=\"tunnel destination ",  { "Ref" : "CsrEip2" }, "\"\n",
+         "ios-config-8=\"router ospf 1\"\n",
+         "ios-config-9=\"bfd all-interfaces\"\n",
+         "ios-config-10=\"redundancy\"\n",
+         "ios-config-11=\"cloud provider aws 1\"\n",
+         "ios-config-12=\"bfd peer 172.17.1.2\"\n",
+         "ios-config-13=\"route-table ",  { "Ref" : "VPCPriRouteTable" }, "\"\n",
+         "ios-config-14=\"cidr ip 0.0.0.0\/0\"\n",
+         "ios-config-15=\"eni ",  { "Ref" : "Csr1PriInt" }, "\"\n",
+         "ios-config-16=\"region ",  { "Ref" : "AWS::Region" }, "\"\n",
+         "ios-config-17=\"interface GigabitEthernet2\"\n",
+         "ios-config-18=\"ip address dhcp\"\n",
+         "ios-config-19=\"no ip dhcp client route request\"\n",
+         "ios-config-19=\"no shutdown\"\n"
+        ]]}}
+      },
+       "DependsOn" : "CsrEip1"
+    },
+    "VpcCsr2" : {
+      "Type" : "AWS::EC2::Instance",
+      "Metadata" : {
+        "Comment1" : "Launch Cisco CSR2"
+      },
+      "Properties" : {
+        "InstanceType" : { "Fn::FindInMap" : [ "CsrInstance", { "Ref" : "CSRType" }, "Type"] },
+        "KeyName" : { "Ref" : "KeyName" },
+        "DisableApiTermination" : {"Fn::If": ["EnableTerm", true, false ]},
+        "ImageId"        : { "Fn::FindInMap" : [ "CiscoCsrAMI", { "Ref" : "AWS::Region" }, { "Ref" : "LicenseModel" } ] },
+        "SubnetId" : { "Ref" : "VPCPubSub" },
+      	"SecurityGroupIds" : [{ "Ref" : "CSRSecurityGroup" }],
+         "Tags" : [
+          { "Key" : "Name", "Value" : "HA CSR2" }
+        ],
+        "IamInstanceProfile": { "Ref" : "HACsrInstanceProfile" },
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+         "ios-config-1=\"username ",  { "Ref" : "CsrEip2" }, "\"\n",
+         "ios-config-2=\"interface Tunnel0\"\n",
+         "ios-config-3=\"ip address 172.17.1.2 255.255.255.252\"\n",
+         "ios-config-4=\"ip ospf 1 area 0\"\n",
+         "ios-config-5=\"bfd interval 500 min_rx 500 multiplier 3\"\n",
+         "ios-config-6=\"tunnel source GigabitEthernet1\"\n",
+         "ios-config-7=\"tunnel destination ",  { "Ref" : "CsrEip1" }, "\"\n",
+         "ios-config-8=\"router ospf 1\"\n",
+         "ios-config-9=\"bfd all-interfaces\"\n",
+         "ios-config-10=\"redundancy\"\n",
+         "ios-config-11=\"cloud provider aws 1\"\n",
+         "ios-config-12=\"bfd peer 172.17.1.1\"\n",
+         "ios-config-13=\"route-table ",  { "Ref" : "VPCPriRouteTable" }, "\"\n",
+         "ios-config-14=\"cidr ip 0.0.0.0\/0\"\n",
+         "ios-config-15=\"eni ",  { "Ref" : "Csr2PriInt" }, "\"\n",
+         "ios-config-16=\"region ",  { "Ref" : "AWS::Region" }, "\"\n",
+         "ios-config-17=\"interface GigabitEthernet2\"\n",
+         "ios-config-18=\"ip address dhcp\"\n",
+         "ios-config-19=\"no ip dhcp client route request\"\n",
+         "ios-config-19=\"no shutdown\"\n"
+        ]]}}
+      },
+        "DependsOn" : "CsrEip2"
+    },
+
+     "Csr1PriInt": {
+      "Type": "AWS::EC2::NetworkInterface",
+      "Properties": {
+        "SourceDestCheck": false,
+        "SubnetId": {
+          "Ref": "VPCPriSub"
+        }
+      }
+    },
+    "Csr2PriInt": {
+      "Type": "AWS::EC2::NetworkInterface",
+      "Properties": {
+        "SourceDestCheck": false,
+        "SubnetId": {
+          "Ref": "VPCPriSub"
+        }
+      }
+    },
+    "CSRSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "CSR Security Group Rules",
+        "VpcId" : { "Ref" : "HAVPC" },
+        "SecurityGroupIngress" : [
+           { "IpProtocol" : "tcp", "FromPort" : "22",  "ToPort" : "22", "CidrIp" : "0.0.0.0/0" }
+  ],
+        "SecurityGroupEgress" : [
+           { "IpProtocol" : "-1", "FromPort" : "0", "ToPort" : "65535", "CidrIp" : "0.0.0.0/0" } ]
+      }
+    },
+    "HACsrInstanceProfile": {
+        "Type": "AWS::IAM::InstanceProfile",
+        "Properties": {
+          "Roles": [ { "Ref" : "HACsrRole" } ]
+        }
+      },
+
+     "HACsrRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version" : "2012-10-17",
+          "Statement": [ {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "ec2.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+          } ]
+        },
+        "Path": "/"
+      }
+   },
+
+     "HACsrPolicy" : {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+    "Roles" : [ { "Ref" : "HACsrRole" } ],
+          "PolicyName": "Cisco_HA_Permissions",
+          "PolicyDocument": {
+            "Version" : "2012-10-17",
+      "Statement": [
+          {
+              "Effect": "Allow", 
+              "Action": [
+                  "ec2:AssociateRouteTable", 
+                  "ec2:CreateRoute", 
+                  "ec2:CreateRouteTable", 
+                  "ec2:DeleteRoute", 
+                  "ec2:DeleteRouteTable", 
+                  "ec2:DescribeRouteTables", 
+                  "ec2:DescribeVpcs", 
+                  "ec2:ReplaceRoute", 
+                  "ec2:DisassociateRouteTable", 
+                  "ec2:ReplaceRouteTableAssociation"
+              ],
+              "Resource": "*" }
+       ]
+        }
+      }
+    }
+  },
+
+  "Outputs" : {
+    "CSR1" : {
+      "Description" : "IP Address for CSR1",
+      "Value" : { "Fn::GetAtt" : [ "VpcCsr1", "PublicIp" ] } 
+    },
+    "CSR2" : {
+      "Description" : "IP Address for CSR2",
+      "Value" : { "Fn::GetAtt" : [ "VpcCsr2", "PublicIp" ] } 
+    }
+  }
+}
